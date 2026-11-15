@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Only the owner's verified Google account counts as admin.
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.get('email', '') == 'musfiqurrahimsiam@gmail.com'
+        && request.auth.token.get('email_verified', false) == true;
+    }
+
+    // One private conversation per visitor. The visitor id is their anonymous Firebase uid.
+    match /threads/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+
+      allow create, update: if signedIn()
+        && (request.auth.uid == uid || isAdmin())
+        && request.resource.data.keys().hasOnly(['name', 'lastText', 'lastMessageAt'])
+        && request.resource.data.lastMessageAt == request.time
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 1
+        && request.resource.data.name.size() <= 30
+        && (!('lastText' in request.resource.data)
+            || (request.resource.data.lastText is string && request.resource.data.lastText.size() <= 120));
+
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        // A visitor can only see their own conversation. Nobody can read another visitor's messages.
+        allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+
+        allow create: if signedIn()
+          && request.resource.data.keys().hasOnly(['text', 'from', 'ts'])
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 500
+          && request.resource.data.ts == request.time
+          && (
+            (request.auth.uid == uid && request.resource.data.from == 'visitor')
+            || (isAdmin() && request.resource.data.from == 'admin')
+          );
+
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+    }
+  }
+}
